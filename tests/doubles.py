@@ -11,21 +11,23 @@ from langchain_core.runnables import RunnableLambda
 
 from agents.supervisor import SupervisorDecision
 
-MANIFEST_CHUNK = (
-    '[02_despliegue_y_cli.md#5] sección: Ejemplo de manifiesto mínimo · similitud 0.81\n'
-    'name: pagos-api\nresources:\n  cpu: "500m"\n  memory: "512Mi"\nreplicas:\n  min: 2\n  max: 10'
-)
+# El fragmento real del manifiesto en la base es 02_despliegue_y_cli.md#4.
+MANIFEST_REF = "02_despliegue_y_cli.md#4"
+MANIFEST_CONTENT = 'name: pagos-api\nresources:\n  cpu: "500m"\n  memory: "512Mi"\nreplicas:\n  min: 2\n  max: 10'
+# Lo que ve el agente: encabezado con id y puntaje + contenido. Solo el contenido es evidencia.
+MANIFEST_TOOL_OUTPUT = f"[{MANIFEST_REF}] sección: Ejemplo de manifiesto mínimo · similitud 0.81\n{MANIFEST_CONTENT}"
 RESEARCH_FINDINGS = (
-    "Hallazgos:\n- pagos-api pide cpu 500m y memoria 512Mi, con replicas.max 10 [02_despliegue_y_cli.md#5]\n"
+    f"Hallazgos:\n- pagos-api pide cpu 500m y memoria 512Mi, con replicas.max 10 [{MANIFEST_REF}]\n"
     "No encontrado:\n- nada"
 )
-PARTIAL_FINDINGS = (
-    "Hallazgos:\n- pagos-api pide cpu 500m y memoria 512Mi [02_despliegue_y_cli.md#5]\n"
-    "No encontrado:\n- el máximo de réplicas"
-)
+PARTIAL_FINDINGS = f"Hallazgos:\n- pagos-api pide cpu 500m y memoria 512Mi [{MANIFEST_REF}]\nNo encontrado:\n- el máximo de réplicas"
 ANALYSIS = "Cálculos:\n- CPU total: 10 * 0.5 = 5 cores (datos: 10 réplicas, 500m)\nDatos faltantes:\n- ninguno"
-GOOD_ANSWER = "En el máximo de 10 réplicas, pagos-api reserva 5 cores de CPU [02_despliegue_y_cli.md#5]."
-INVENTED_ANSWER = "En el máximo de 10 réplicas, pagos-api reserva 7 cores de CPU [02_despliegue_y_cli.md#5]."
+# Con análisis: el 5 sale de la calculadora.
+GOOD_ANSWER = f"En el máximo de 10 réplicas, pagos-api reserva 5 cores de CPU [{MANIFEST_REF}]."
+# Número que ninguna herramienta produjo.
+INVENTED_ANSWER = f"En el máximo de 10 réplicas, pagos-api reserva 7 cores de CPU [{MANIFEST_REF}]."
+# Sin análisis: solo datos que están en el fragmento.
+RESEARCH_ONLY_ANSWER = f"pagos-api pide 500m de CPU y 512Mi de memoria por réplica, con un máximo de 10 réplicas [{MANIFEST_REF}]."
 
 
 def scripted_decider(routes: list[tuple[str, str]]):
@@ -83,9 +85,9 @@ def scripted_llm(*answers: str):
 
 def research_double(partial_first: bool = False):
     """Investigador guionado. Con `partial_first`, el primer aporte omite el máximo de réplicas."""
-    artifact = [{"id": "02_despliegue_y_cli.md#5", "score": 0.81, "content": MANIFEST_CHUNK}]
+    artifact = [{"id": MANIFEST_REF, "score": 0.81, "content": MANIFEST_CONTENT}]
     finals = [PARTIAL_FINDINGS, RESEARCH_FINDINGS] if partial_first else [RESEARCH_FINDINGS]
-    return scripted_agent("search_docs", MANIFEST_CHUNK, finals, artifact)
+    return scripted_agent("search_docs", MANIFEST_TOOL_OUTPUT, finals, artifact)
 
 
 def analyst_double():

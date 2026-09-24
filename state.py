@@ -1,7 +1,7 @@
 """Estado compartido del orquestador: el "pizarrón" que leen y escriben todos los nodos.
 
-Regla de oro: cada campo tiene UN solo dueño. Los aportes de los agentes y las
-decisiones del supervisor son append-only (reducer `operator.add`), así ningún nodo
+Regla de oro: los campos que escriben varios nodos (messages, contributions) son
+append-only con reducer, y los de reemplazo tienen un único escritor. Así ningún nodo
 puede pisar lo que escribió otro y siempre se sabe quién aportó qué y en qué intento.
 
 | Campo                                        | Lo escribe                                   |
@@ -11,7 +11,7 @@ puede pisar lo que escribió otro y siempre se sabe quién aportó qué y en qu�
 | task_completed, decisions                    |                                              |
 | contributions                                | researcher, analyst, synthesizer             |
 | final_answer                                 | synthesizer (el supervisor solo le agrega    |
-|                                              | una nota si cierra con la validación fallida)|
+|                                              | notas si cierra con problemas pendientes)    |
 | validation                                   | validator                                    |
 """
 
@@ -41,7 +41,8 @@ class Contribution(TypedDict):
     instruction: str  # lo que pidió el supervisor (el agente no ve nada más de la orquestación)
     content: str  # la salida del agente
     sources: list[str]  # ids de fragmentos recuperados (investigador) o herramientas usadas
-    tool_calls: list[ToolCallRecord]  # evidencia cruda: lo que devolvieron las herramientas
+    tool_calls: list[ToolCallRecord]  # registro de cada llamada, con la salida tal como la vio el agente
+    evidence: list[str]  # lo verificable: texto de los fragmentos recuperados y resultados de cálculo
     status: Literal["ok", "error"]
 
 
@@ -58,7 +59,7 @@ class ValidationReport(TypedDict):
     passed: bool
     checked_numbers: int
     unsupported_numbers: list[str]  # números de la respuesta sin respaldo en ninguna herramienta
-    invalid_citations: list[str]  # citas a fragmentos que el investigador nunca recuperó
+    invalid_citations: list[str]  # citas a fragmentos (o archivos) que el investigador nunca recuperó
     cited_sources: list[str]
     warnings: list[str]
 

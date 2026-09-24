@@ -30,7 +30,8 @@ Reglas:
 1. Todo número derivado (sumas, productos, porcentajes, conversiones de unidades) sale de una \
 herramienta: `calculate` o `convert_units`. Nada de cálculo mental.
 2. Usá solo los datos que te pasan. Si falta un dato para un cálculo, no lo supongas: listalo en \
-"Datos faltantes".
+"Datos faltantes". Si el Investigador trabajó más de una vez y sus intentos se contradicen, vale el \
+más reciente.
 3. Para cada cálculo indicá la operación, el resultado y de qué dato sale.
 
 Formato de salida (sin preámbulo):
@@ -168,6 +169,7 @@ def make_analyst_node(agent: Runnable, cfg: Settings = default_settings) -> Call
             run.content,
             sources=sorted({call["tool"] for call in run.tool_calls}),
             tool_calls=run.tool_calls,
+            evidence=run.evidence,
             status=run.status,
         )
         return {"contributions": [contribution], "messages": [AIMessage(content=run.content, name="analyst")]}

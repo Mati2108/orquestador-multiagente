@@ -128,7 +128,7 @@ def build_briefing(state: OrchestratorState, cfg: Settings, step: int) -> str:
         lines.append(_truncate(c["content"], 1800))
     if state.get("final_answer"):
         lines.append(f"\nValidación automática del último borrador: {describe_validation(state.get('validation'))}")
-    lines.append("\nDecidí el próximo paso.")
+    lines.append("\nDada la conversación actual, ¿quién debe intervenir ahora o es momento de finalizar?")
     return "\n".join(lines)
 
 
@@ -140,11 +140,24 @@ def default_policy(state: OrchestratorState) -> Route:
     return "synthesizer" if not state.get("final_answer") else "FINISH"
 
 
+def draft_is_stale(state: OrchestratorState) -> bool:
+    """Hay aportes de especialistas posteriores al último borrador: el borrador no los incluye."""
+    contributions = [c for c in state.get("contributions", []) if c["status"] == "ok"]
+    drafts = [c["id"] for c in contributions if c["agent"] == "synthesizer"]
+    return bool(drafts) and any(c["id"] > drafts[-1] and c["agent"] != "synthesizer" for c in contributions)
+
+
+def draft_ok(state: OrchestratorState) -> bool:
+    validation = state.get("validation")
+    return bool(state.get("final_answer")) and bool(validation and validation["passed"]) and not draft_is_stale(state)
+
+
 def fallback_route(state: OrchestratorState, cfg: Settings) -> Route:
     """Hacia dónde ir cuando el LLM pide algo que el presupuesto no permite."""
-    validation = state.get("validation")
-    draft_ok = bool(state.get("final_answer")) and bool(validation and validation["passed"])
-    if not draft_ok and attempts_used(state)["synthesizer"] < cfg.max_attempts_per_agent:
+    used = attempts_used(state)
+    if not state.get("final_answer") and used["researcher"] == 0:
+        return "researcher"  # nunca se responde sin haber buscado
+    if not draft_ok(state) and used["synthesizer"] < cfg.max_attempts_per_agent:
         return "synthesizer"
     return "FINISH"
 
@@ -152,11 +165,15 @@ def fallback_route(state: OrchestratorState, cfg: Settings) -> Route:
 def apply_guards(proposed: Route, state: OrchestratorState, cfg: Settings) -> tuple[Route, str | None]:
     used = attempts_used(state)
     validation = state.get("validation")
+    synth_left = used["synthesizer"] < cfg.max_attempts_per_agent
     if proposed == "FINISH":
         if not state.get("final_answer"):
-            return fallback_route(state, cfg), "No se puede cerrar sin una respuesta: primero hay que sintetizar."
-        if validation and not validation["passed"] and used["synthesizer"] < cfg.max_attempts_per_agent:
+            route = fallback_route(state, cfg)
+            return route, f"No se puede cerrar sin una respuesta: se sigue con {route}."
+        if validation and not validation["passed"] and synth_left:
             return "synthesizer", "La validación falló: se pide un borrador corregido antes de cerrar."
+        if draft_is_stale(state) and synth_left:
+            return "synthesizer", "Hay aportes posteriores al último borrador: se pide incorporarlos antes de cerrar."
         return "FINISH", None
     if used[proposed] >= cfg.max_attempts_per_agent:
         route = fallback_route(state, cfg)
@@ -176,6 +193,8 @@ def guard_instruction(route: Route, state: OrchestratorState) -> str:
             f"Corregí el borrador anterior: quitá o reemplazá por valores con respaldo {' y '.join(problems)}. "
             "No agregues datos nuevos."
         )
+    if route == "synthesizer" and draft_is_stale(state):
+        return "Actualizá la respuesta final: incorporá los aportes del equipo posteriores a tu borrador anterior."
     return DEFAULT_INSTRUCTIONS[route]
 
 
@@ -220,14 +239,17 @@ def closing_answer(state: OrchestratorState) -> dict:
     if not draft:
         failed = [f"{c['agent']} (intento {c['attempt']})" for c in state.get("contributions", []) if c["status"] == "error"]
         return {"final_answer": "No se pudo generar una respuesta." + (f" Fallaron: {', '.join(failed)}." if failed else "")}
+    notes = []
     if validation and not validation["passed"]:
         problems = []
         if validation["unsupported_numbers"]:
             problems.append(f"los números {validation['unsupported_numbers']}")
         if validation["invalid_citations"]:
             problems.append(f"las citas {validation['invalid_citations']}")
-        return {"final_answer": f"{draft}\n\n⚠️ Nota de validación: no se pudo verificar el respaldo de {' ni '.join(problems)}."}
-    return {}
+        notes.append(f"⚠️ Nota de validación: no se pudo verificar el respaldo de {' ni '.join(problems)}.")
+    if draft_is_stale(state):
+        notes.append("⚠️ Nota: la respuesta no incorpora los aportes posteriores al último borrador.")
+    return {"final_answer": "\n\n".join([draft, *notes])} if notes else {}
 
 
 def route_from_supervisor(state: OrchestratorState) -> Literal["researcher", "analyst", "synthesizer", "__end__"]:

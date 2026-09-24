@@ -130,12 +130,12 @@ def build_store(embeddings: Embeddings, cfg: Settings = default_settings, rebuil
     return store
 
 
-@lru_cache(maxsize=1)
-def get_store() -> Chroma:
-    """Vectorstore compartido del proceso (se construye una sola vez)."""
+@lru_cache(maxsize=4)
+def get_store(cfg: Settings = default_settings) -> Chroma:
+    """Vectorstore compartido del proceso: uno por configuración, construido una sola vez."""
     from config import build_embeddings
 
-    return build_store(build_embeddings(default_settings), default_settings)
+    return build_store(build_embeddings(cfg), cfg)
 
 
 def main(argv: list[str] | None = None) -> int:

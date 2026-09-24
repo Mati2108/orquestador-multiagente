@@ -1,0 +1,63 @@
+Consulta: ¿Qué pasa si despliego a prod un viernes sin --hotfix?
+
+🧭 supervisor · decisión 1 → researcher
+   evaluación: Sin aportes
+   motivo: No hay información previa, por lo que el investigador debe buscar la política específica en la base vectorial.
+   instrucción: Busca en la documentación de Orbital cuáles son las consecuencias o políticas sobre desplegar a producción un viernes sin el flag --hotfix.
+
+🔎 researcher · intento 1 · herramientas: search_docs×2 · fragmentos: 01_introduccion_orbital.md#2, 02_despliegue_y_cli.md#3, 04_troubleshooting.md#4, 04_troubleshooting.md#0, 01_introduccion_orbital.md#3
+   │ Hallazgos:
+   │ - Los despliegues a `prod` solo pueden hacerse de lunes a jueves entre las 09:00 y las 17:00 hora de Buenos Aires [01_introduccion_orbital.md#2].
+   │ 
+   │ No encontrado:
+   │ - Las consecuencias específicas o políticas adicionales de intentar desplegar un viernes sin `--hotfix` más allá de la restricción horaria mencionada.
+
+🧭 supervisor · decisión 2 → researcher
+   evaluación: La investigación identificó que los despliegues a producción solo se permiten de lunes a jueves hasta las 17:00hs, pero no especifica qué sucede técnicamente si se intenta un viernes sin --hotfix.
+   motivo: Es necesario confirmar si el sistema bloquea el despliegue automáticamente o si el flag '--hotfix' es la excepción permitida para despliegues fuera de horario.
+   instrucción: Investigar específicamente qué sucede al intentar un comando de despliegue a producción fuera del horario permitido (viernes) sin el flag '--hotfix'. Buscar mensajes de error del CLI, bloqueos automáticos o si el flag '--hotfix' permite saltar esta restricción horaria.
+
+🔎 researcher · intento 2 · herramientas: search_docs×1 · fragmentos: 01_introduccion_orbital.md#2, 02_despliegue_y_cli.md#3, 04_troubleshooting.md#4, 04_troubleshooting.md#0
+   │ Hallazgos:
+   │ - Los despliegues a `prod` solo pueden hacerse de lunes a jueves entre las 09:00 y las 17:00 hora de Buenos Aires [01_introduccion_orbital.md#2].
+   │ - Declarar un hotfix con la bandera `--hotfix` exige una justificación escrita y notifica automáticamente al canal de guardia [01_introduccion_orbital.md#2].
+   │ 
+   │ No encontrado:
+   │ - Mensajes de error específicos del CLI o detalles adicionales sobre el bloqueo automático al intentar desplegar un viernes sin `--hotfix` más allá de la restricción horaria.
+
+🧭 supervisor · decisión 3 → synthesizer
+   evaluación: La investigación confirmó la restricción horaria (lunes a jueves) y que el uso de --hotfix requiere justificación y notifica a la guardia, cubriendo los puntos clave de la consulta.
+   motivo: La investigación ya proveyó las reglas de negocio necesarias para responder la consulta sin necesidad de cálculos adicionales.
+   instrucción: Redacta una respuesta para el usuario explicando que los despliegues a producción solo están permitidos de lunes a jueves (09:00-17:00 ART) según [01_introduccion_orbital.md#2]. Si se intenta un viernes sin el flag --hotfix, el despliegue está restringido por esta política. Aclara que el uso de --hotfix permite el despliegue pero exige una justificación escrita y dispara una notificación al […]
+
+✍️  synthesizer · intento 1
+   │ Si intentás desplegar un viernes sin el flag `--hotfix`, el despliegue estará restringido porque se encuentra fuera del horario permitido por la política de la plataforma. Solo vas a poder avanzar si declarás un hotfix, lo que implica seguir pasos adicionales de auditoría.
+   │ 
+   │ Detalle:
+   │ - Los despliegues a `prod` solo pueden hacerse de lunes a jueves entre las 09:00 y las 17:00 hora de Buenos Aires [01_introduccion_orbital.md#2].
+   │ - El uso de la bandera `--hotfix` permite el despliegue pero exige una justificación escrita y notifica automáticamente al canal de guardia [01_introduccion_orbital.md#2].
+   │ 
+   │ No se encontraron detalles sobre el mensaje de error específico que arroja el CLI ante esta restricción.
+   │ 
+   │ Fuentes: [01_introduccion_orbital.md#2]
+
+🛡️  validator · APROBADA: 4 números con respaldo · citas válidas: 1
+
+🧭 supervisor · decisión 4 → FINISH
+   evaluación: El sintetizador redactó una respuesta completa basada en los hallazgos de investigación, cumpliendo con las restricciones horarias y el uso de banderas documentados. La validación automática fue aprobada.
+   motivo: Se respondió la consulta con los datos disponibles en la documentación y el borrador pasó la validación automática.
+
+================================================================================
+RESPUESTA FINAL
+================================================================================
+Si intentás desplegar un viernes sin el flag `--hotfix`, el despliegue estará restringido porque se encuentra fuera del horario permitido por la política de la plataforma. Solo vas a poder avanzar si declarás un hotfix, lo que implica seguir pasos adicionales de auditoría.
+
+Detalle:
+- Los despliegues a `prod` solo pueden hacerse de lunes a jueves entre las 09:00 y las 17:00 hora de Buenos Aires [01_introduccion_orbital.md#2].
+- El uso de la bandera `--hotfix` permite el despliegue pero exige una justificación escrita y notifica automáticamente al canal de guardia [01_introduccion_orbital.md#2].
+
+No se encontraron detalles sobre el mensaje de error específico que arroja el CLI ante esta restricción.
+
+Fuentes: [01_introduccion_orbital.md#2]
+
+[10 llamadas al LLM · 9.646 tokens de entrada · 1.825 de salida (830 de razonamiento) · 286.3 s]

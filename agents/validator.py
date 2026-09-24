@@ -1,12 +1,14 @@
 """Validador: control determinístico (sin LLM) del borrador antes de que el supervisor cierre.
 
 Dos reglas duras:
-1. Todo número de la respuesta tiene que aparecer en la salida de alguna herramienta
-   (un fragmento recuperado de la base vectorial o un cálculo del Analista) o en la
-   consulta del usuario. Lo que el texto de un agente "dice" no cuenta como evidencia:
-   así se detectan números inventados o calculados de cabeza.
-2. Toda cita [archivo#n] tiene que corresponder a un fragmento que el Investigador
-   realmente recuperó.
+1. Todo número de la respuesta tiene que aparecer en lo que devolvió alguna herramienta
+   (el texto de un fragmento recuperado de la base vectorial o un cálculo del Analista)
+   o en la consulta del usuario. Lo que el texto de un agente "dice" no cuenta como
+   evidencia, y tampoco la metadata del formato (ids de fragmentos, puntajes): así se
+   detectan números inventados o calculados de cabeza.
+2. Toda cita tiene que apuntar a algo que el Investigador realmente recuperó: una cita
+   a fragmento [archivo#n], a ese fragmento; una cita a archivo [archivo.md], a un
+   archivo del que se recuperó al menos un fragmento.
 
 Es una heurística: no entiende el significado, solo verifica trazabilidad. Por eso su
 veredicto vuelve al supervisor, que decide si corregir o cerrar.
@@ -18,7 +20,8 @@ import re
 
 from state import OrchestratorState, ValidationReport, contributions_by, get_question
 
-REF_RE = re.compile(r"[\w\-]+\.md\s*#\s*\d+")
+CHUNK_REF_RE = re.compile(r"[\w\-]+\.md\s*#\s*\d+")
+FILE_REF_RE = re.compile(r"[\w\-]+\.md(?!\s*#\s*\d)")
 LIST_MARKER_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 NUMBER_RE = re.compile(r"(?<![A-Za-z_\d.,])\d+(?:[.,]\d+)*")
 
@@ -54,8 +57,10 @@ def _normalize_ref(ref: str) -> str:
 
 
 def validate_answer(answer: str, evidence_texts: list[str], retrieved_ids: set[str]) -> ValidationReport:
-    cited = [_normalize_ref(r) for r in REF_RE.findall(answer)]
-    body = LIST_MARKER_RE.sub("", REF_RE.sub(" ", answer))
+    chunk_refs = [_normalize_ref(r) for r in CHUNK_REF_RE.findall(answer)]
+    file_refs = FILE_REF_RE.findall(answer)
+    # Los dígitos de las citas ("02_...md#4") no son datos: se sacan antes de buscar números.
+    body = LIST_MARKER_RE.sub("", FILE_REF_RE.sub(" ", CHUNK_REF_RE.sub(" ", answer)))
 
     evidence: set[float] = set()
     for text in evidence_texts:
@@ -64,17 +69,18 @@ def validate_answer(answer: str, evidence_texts: list[str], retrieved_ids: set[s
 
     checked = extract_numbers(body)
     unsupported = [token for token, candidates in checked if not {round(c, 6) for c in candidates} & evidence]
-    invalid = sorted({ref for ref in cited if ref not in retrieved_ids})
+    retrieved_files = {ref.split("#")[0] for ref in retrieved_ids}
+    invalid = sorted({ref for ref in chunk_refs if ref not in retrieved_ids} | {f for f in file_refs if f not in retrieved_files})
 
     warnings = []
-    if retrieved_ids and not cited:
+    if retrieved_ids and not chunk_refs and not file_refs:
         warnings.append("La respuesta no cita ningún fragmento.")
     return ValidationReport(
         passed=not unsupported and not invalid,
         checked_numbers=len(checked),
         unsupported_numbers=list(dict.fromkeys(unsupported)),
         invalid_citations=invalid,
-        cited_sources=list(dict.fromkeys(cited)),
+        cited_sources=list(dict.fromkeys(chunk_refs + file_refs)),
         warnings=warnings,
     )
 
@@ -91,7 +97,7 @@ def validator(state: OrchestratorState) -> dict:
     retrieved: set[str] = set()
     for agent in ("researcher", "analyst"):
         for contribution in contributions_by(state, agent):
-            evidence.extend(call["output"] for call in contribution["tool_calls"])
+            evidence.extend(contribution["evidence"])
             if agent == "researcher":
                 retrieved.update(contribution["sources"])
 

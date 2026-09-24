@@ -17,6 +17,7 @@ class AgentRun:
     content: str
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     artifacts: list[Any] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
     status: str = "ok"
 
 
@@ -56,6 +57,13 @@ def run_react_agent(agent: Runnable, task: str, config: RunnableConfig | None, r
             )
             if message.artifact is not None:
                 run.artifacts.append(message.artifact)
+            # Evidencia = el contenido que devolvió la herramienta, sin la metadata que le agrega el formato
+            # (ids "[archivo#n]", puntajes de similitud): esos números no respaldan nada.
+            hits = message.artifact if isinstance(message.artifact, list) else []
+            if hits and all(isinstance(hit, dict) and "content" in hit for hit in hits):
+                run.evidence.extend(hit["content"] for hit in hits)
+            else:
+                run.evidence.append(message.text)
 
     final = next((m for m in reversed(messages) if isinstance(m, AIMessage) and not m.tool_calls), None)
     run.content = final.text.strip() if final and final.text.strip() else "Error: el agente no devolvió texto final."
@@ -73,13 +81,19 @@ def new_contribution(state: OrchestratorState, agent: AgentName, content: str, *
         content=content,
         sources=extra.get("sources", []),
         tool_calls=extra.get("tool_calls", []),
+        evidence=extra.get("evidence", []),
         status=extra.get("status", "ok"),
     )
 
 
+def _usable(state: OrchestratorState, agent: AgentName) -> list[Contribution]:
+    """Aportes que sirven como contexto: un mensaje de error no es un dato."""
+    return [c for c in contributions_by(state, agent) if c["status"] == "ok"]
+
+
 def previous_attempt_block(state: OrchestratorState, agent: AgentName) -> str:
     """Si es un refinamiento, el agente ve su propio aporte anterior (y nada más del resto)."""
-    previous = contributions_by(state, agent)
+    previous = _usable(state, agent)
     if not previous:
         return ""
     return f"\n\nTu aporte anterior, que el supervisor pidió refinar:\n{previous[-1]['content']}"
@@ -87,7 +101,7 @@ def previous_attempt_block(state: OrchestratorState, agent: AgentName) -> str:
 
 def findings_block(state: OrchestratorState, agent: AgentName, title: str) -> str:
     """Los aportes de un agente como texto, del más viejo al más nuevo."""
-    items = contributions_by(state, agent)
+    items = _usable(state, agent)
     if not items:
         return f"{title}: (sin aportes)"
     parts = [f"{title} — intento {c['attempt']}:\n{c['content']}" for c in items]

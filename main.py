@@ -141,23 +141,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--demo", action="store_true", help="Corre la consulta de demostración.")
     parser.add_argument("--diagram", action="store_true", help="Exporta el diagrama del grafo a docs/.")
     args = parser.parse_args(argv)
+    question = DEMO_QUESTION if args.demo else args.question
+    if not args.diagram and not question:  # se valida antes de construir nada (ni pedir la clave)
+        parser.error("pasá una consulta o usá --demo")
 
-    from graph import build_graph, export_diagram
+    from graph import build_diagram_graph, build_graph, export_diagram
 
-    graph = build_graph()
     if args.diagram:
-        mermaid_path, png_path = export_diagram(graph)
+        mermaid_path, png_path = export_diagram(build_diagram_graph())
         print(f"Diagrama: {mermaid_path}" + (f" y {png_path}" if png_path else " (PNG no disponible sin red)"))
         return 0
 
-    question = DEMO_QUESTION if args.demo else args.question
-    if not question:
-        parser.error("pasá una consulta o usá --demo")
     print(f"Consulta: {question}\n")
-    result = run_with_trace(graph, question)
+    result = run_with_trace(build_graph(), question)
     print("=" * 80 + "\nRESPUESTA FINAL\n" + "=" * 80)
     print(result.state["final_answer"])
-    print(f"\n[{result.usage.summary()} · {result.seconds:.1f} s]")
+    status = "tarea completada" if result.state.get("task_completed") else "el supervisor no cerró la tarea"
+    print(f"\n[{status} · {result.usage.summary()} · {result.seconds:.1f} s]")
     return 0
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -41,7 +41,7 @@ def build_graph(
         if research_agent is None:
             from knowledge_base import get_store
 
-            research_agent = build_research_agent(worker_llm, get_store(), cfg)
+            research_agent = build_research_agent(worker_llm, get_store(cfg), cfg)
         decide = decide or build_supervisor_decider(coordinator_llm)
         analyst_agent = analyst_agent or build_analyst_agent(worker_llm)
         synthesizer_llm = synthesizer_llm or coordinator_llm
@@ -60,6 +60,12 @@ def build_graph(
     builder.add_edge("synthesizer", "validator")
     builder.add_edge("validator", "supervisor")
     return builder.compile(name="orquestador")
+
+
+def build_diagram_graph() -> CompiledStateGraph:
+    """El mismo grafo con piezas vacías: alcanza para dibujarlo sin clave de API."""
+    stub = RunnableLambda(lambda _: {"messages": []})
+    return build_graph(decide=lambda *_: None, research_agent=stub, analyst_agent=stub, synthesizer_llm=stub)
 
 
 def export_diagram(graph: CompiledStateGraph, out_dir: Path = ROOT_DIR / "docs") -> tuple[Path, Path | None]:

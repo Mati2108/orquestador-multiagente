@@ -2,7 +2,7 @@
 
 Pre-entrega 6 del curso AI Architect. Prototipo de un orquestador jerárquico de análisis e investigación: un **Supervisor** recibe la consulta, delega en un **Investigador** (búsqueda semántica sobre la base vectorial de la Pre-entrega 3) y en un **Analista** (cómputo con herramientas), manda a redactar la respuesta, la hace validar y decide si cierra o si algún especialista tiene que refinar su aporte.
 
-La demo del flujo de delegación, ejecutada contra Gemini, está en [`demo.ipynb`](demo.ipynb).
+La demo del flujo de delegación, ejecutada contra Gemini, está en [`demo.ipynb`](demo.ipynb). Los casos de refinamiento y de corte están en [`demo_reglas.ipynb`](demo_reglas.ipynb), que corre sin clave de API.
 
 ## El grafo
 
@@ -34,7 +34,11 @@ graph TD;
 	classDef last fill:#bfb6fc
 ```
 
-Generado con `graph.get_graph().draw_mermaid()` (`python main.py --diagram` lo regenera en `docs/graph.mmd` y `docs/graph.png`). Las flechas punteadas son la arista condicional del Supervisor: la función `route_from_supervisor` devuelve un `Literal["researcher", "analyst", "synthesizer", "__end__"]` y LangGraph arma los destinos a partir de ese tipo.
+La misma imagen, renderizada con `graph.get_graph().draw_mermaid_png()`:
+
+![Grafo del orquestador](docs/graph.png)
+
+El bloque Mermaid sale de `graph.get_graph().draw_mermaid()` (`python main.py --diagram` regenera `docs/graph.mmd` y `docs/graph.png`). Las flechas punteadas son la arista condicional del Supervisor: la función `route_from_supervisor` devuelve un `Literal["researcher", "analyst", "synthesizer", "__end__"]` y LangGraph arma los destinos a partir de ese tipo.
 
 | Nodo | Qué hace |
 |---|---|
@@ -42,11 +46,11 @@ Generado con `graph.get_graph().draw_mermaid()` (`python main.py --diagram` lo r
 | `researcher` | Agente ReAct. Busca en ChromaDB y devuelve hallazgos con cita `[archivo#n]`. |
 | `analyst` | Agente ReAct. Calcula y convierte unidades sobre los hallazgos, siempre con herramientas. |
 | `synthesizer` | Fase de síntesis final: redacta la respuesta usando solo los aportes. |
-| `validator` | Control determinístico (sin LLM): cada número de la respuesta tiene que salir de una herramienta y cada cita tiene que ser un fragmento realmente recuperado. |
+| `validator` | Control determinístico (sin LLM): cada número de la respuesta tiene que salir de una herramienta (o de la consulta del usuario), y cada cita tiene que apuntar a un fragmento, o a un archivo, realmente recuperado. |
 
 ## Por qué una topología jerárquica
 
-Con un supervisor en el centro, el control del flujo queda en un solo lugar. Ahí se decide el ruteo, se corta el grafo y se valida antes del `END`. Los especialistas no se conocen entre sí: sumar uno nuevo es agregar un nodo, un valor al `Literal` y una línea en el prompt del supervisor.
+Con un supervisor en el centro, el control del flujo queda en un solo lugar. Ahí se decide el ruteo, se corta el grafo y se valida antes del `END`. Los especialistas no se conocen entre sí. Sumar uno nuevo es agregar su nodo y su arista de vuelta en `graph.py`, su nombre en los `Literal` de `state.py` y de la arista condicional, y su descripción en el prompt del supervisor. Ningún otro agente cambia.
 
 Alternativas que descarté:
 
@@ -71,16 +75,18 @@ El costo de esta topología es que cada salto pasa por el supervisor: suma una l
 | Campo | Tipo | Lo escribe | Para qué |
 |---|---|---|---|
 | `messages` | `list[AnyMessage]` (reducer `add_messages`) | usuario y especialistas | La consulta y cada aporte como `AIMessage(name=agente)`. |
-| `contributions` | `list[Contribution]` (reducer `operator.add`) | `researcher`, `analyst`, `synthesizer` | Registro append-only: agente, n.º de intento, instrucción recibida, contenido, fuentes, llamadas a herramientas con su salida y estado. |
+| `contributions` | `list[Contribution]` (reducer `operator.add`) | `researcher`, `analyst`, `synthesizer` | Registro append-only: agente, n.º de intento, instrucción recibida, contenido, fuentes, llamadas a herramientas con su salida, evidencia verificable y estado. |
 | `decisions` | `list[Decision]` (reducer `operator.add`) | `supervisor` | Cada decisión con su evaluación, motivo, instrucción y, si hubo, la regla dura que la corrigió. |
 | `next_agent` | `Literal[...] \| None` | `supervisor` | Lo lee la arista condicional. |
 | `current_instruction` | `str` | `supervisor` | La tarea puntual del próximo agente. |
 | `step` | `int` | `supervisor` | Contador de decisiones (condición de parada). |
 | `task_completed` | `bool` | `supervisor` | `True` al cerrar. |
-| `final_answer` | `str` | `synthesizer` | El borrador vigente. El supervisor solo le agrega una nota si cierra con la validación fallida. |
+| `final_answer` | `str` | `synthesizer` | El borrador vigente. El supervisor solo le agrega una nota si cierra con la validación fallida o con aportes que el borrador no incorpora. |
 | `validation` | `ValidationReport \| None` | `validator` | Números sin respaldo, citas inválidas, advertencias. |
 
 Cuántas veces trabajó cada agente no se guarda en un contador aparte: se calcula del historial de `contributions`, así no puede desincronizarse.
+
+Los agentes no se llaman entre sí: se comunican de forma asíncrona a través del estado. Cada uno lee lo que necesita y deja su aporte registrado, así nada se pierde entre turnos. El grafo corre igual con `invoke`/`stream` que con `ainvoke`/`astream`, y hay un test que lo verifica.
 
 ## Agentes y herramientas
 
@@ -90,7 +96,7 @@ Cuántas veces trabajó cada agente no se guarda en un contador aparte: se calcu
 | Analista (`agents/analyst_agent.py`) | `calculate(expression)`: aritmética segura recorriendo el AST (sin `eval`). `convert_units(quantity, target_unit)`: cantidades de Kubernetes (`500m`, `512Mi`, `Gi`...). | Instrucción del supervisor + hallazgos del Investigador. **No** ve la consulta ni los fragmentos crudos. | Cálculos con su operación, conclusiones y datos faltantes. |
 | Sintetizador (`agents/synthesizer.py`) | Ninguna. | Consulta + instrucción + hallazgos + resultados (+ el rechazo del validador si es una corrección). | La respuesta final con fuentes. |
 
-Los dos especialistas se crean con `create_agent` de `langchain.agents`, que en LangGraph v1 reemplaza a `create_react_agent` (en esta versión figura como deprecado) y arma el mismo loop ReAct sobre LangGraph.
+Los dos especialistas se crean con `create_agent` de `langchain.agents`, que arma el mismo loop ReAct sobre LangGraph. Es el reemplazo oficial de `create_react_agent`: con LangGraph 1.2, llamar a `create_react_agent` avisa *"create_react_agent has been moved to `langchain.agents`. Please update your import to `from langchain.agents import create_agent`. Deprecated in LangGraph V1.0 to be removed in V2.0."*
 
 **Un modelo por rol.** El supervisor y el sintetizador usan el modelo más capaz (`SUPERVISOR_MODEL`, por defecto `gemini-3-flash-preview`), porque evalúan con la rúbrica, deciden y redactan. Los especialistas tienen tareas acotadas y herramientas, así que alcanza con uno liviano (`LLM_MODEL`, por defecto `gemini-3.5-flash-lite`). En la capa gratuita de Gemini cada modelo tiene su propia cuota, así que repartir los roles también reparte el consumo. Un limitador de ritmo por modelo (`InMemoryRateLimiter`, `LLM_RPM=5`) evita chocar con el límite de 5 pedidos por minuto.
 
@@ -98,7 +104,7 @@ La base vectorial (`knowledge_base.py`) es la de la **Pre-entrega 3** ([rag-loca
 
 ## Supervisión: rúbrica, refinamiento y condición de parada
 
-El prompt del supervisor (`agents/supervisor.py`) incluye una rúbrica explícita:
+En cada turno, el supervisor recibe la consulta, los aportes registrados y el presupuesto que queda, y responde a *"Dada la conversación actual, ¿quién debe intervenir ahora o es momento de finalizar?"*. Su salida estructurada (`SupervisorDecision.next`) es un `Literal` con los nombres de los nodos, más `FINISH`, que la arista condicional traduce a `END`. El prompt (`agents/supervisor.py`) incluye una rúbrica explícita:
 
 - **Investigación suficiente**: R1, trae cada dato que la consulta necesita, con cita. R2, declara lo que no encontró en vez de completarlo.
 - **Análisis suficiente**: A1, cada número derivado salió de una herramienta. A2, usa solo datos investigados. A3, resuelve todos los cálculos pedidos.
@@ -112,20 +118,21 @@ Para evitar el "supervisor infinito", además del criterio de suficiencia hay re
 |---|---|---|
 | Intentos por agente | 2 (uno + un refinamiento) | Si el LLM elige un agente sin intentos, se sigue con la síntesis o se cierra. |
 | Decisiones del supervisor | 8 | Al pasarse, ni se consulta al LLM: se sintetiza con lo disponible y se cierra. |
-| No cerrar sin respuesta | — | `FINISH` sin borrador se convierte en `synthesizer`. |
+| No responder sin investigar | — | `FINISH` sin borrador y sin ninguna investigación se convierte en `researcher`. Si ya se investigó, en `synthesizer`. |
+| Borrador desactualizado | mientras queden intentos | Si después del último borrador llegaron aportes nuevos, `FINISH` se convierte en `synthesizer` para incorporarlos. |
 | No cerrar con validación fallida | mientras queden intentos | `FINISH` con la validación rechazada se convierte en una corrección del sintetizador. |
 | Pasos internos de cada agente ReAct | 12 | Corta un loop de herramientas descontrolado. El error queda registrado como aporte fallido. |
 | `recursion_limit` del grafo | 40 | Última red de seguridad de LangGraph. |
 
-Por qué termina siempre: cada llamada a un especialista consume un intento y los intentos son finitos (3 agentes × 2). El grafo cierra en, como mucho, 7 decisiones del supervisor aunque el LLM insista. El notebook lo muestra con un supervisor guionado que pide investigar para siempre.
+Por qué termina siempre: cada llamada a un especialista consume un intento y los intentos son finitos (3 agentes × 2). El grafo cierra en, como mucho, 7 decisiones del supervisor aunque el LLM insista. [`demo_reglas.ipynb`](demo_reglas.ipynb) lo muestra con un supervisor guionado que pide investigar para siempre. `MAX_STEPS=8` queda como segunda red por si se suben los intentos por agente.
 
 ## Manejo de conflictos entre agentes
 
-1. **Escritura.** Cada campo del estado tiene un solo dueño, y los aportes y decisiones son append-only (`operator.add`). Ningún agente puede pisar lo que escribió otro, y un refinamiento no borra el intento anterior: queda como intento 2.
+1. **Escritura.** Los campos que escriben varios nodos (`messages`, `contributions`) son append-only con reducer, y los de reemplazo tienen un único escritor. La única excepción es que el supervisor agrega notas a `final_answer` al cerrar. Ningún agente puede pisar lo que escribió otro, y un refinamiento no borra el intento anterior: queda como intento 2.
 2. **Contenido.** Si el Analista usa un número distinto del documento, o dos intentos se contradicen, rige una jerarquía de evidencia:
-   - Un dato documental vale si está en un fragmento recuperado. Un número derivado vale si lo produjo una herramienta. Lo que un agente *dice* en su texto no cuenta como evidencia.
-   - Entre dos intentos del mismo agente vale el más reciente, porque el supervisor lo pidió como corrección. El sintetizador tiene esa regla en su prompt.
-   - El validador detecta números sin respaldo y citas a fragmentos que nunca se recuperaron, y el supervisor pide la corrección.
+   - Un dato documental vale si está en el texto de un fragmento recuperado. Un número derivado vale si lo produjo una herramienta. Lo que un agente *dice* en su texto no cuenta como evidencia, y tampoco la metadata de las herramientas (ids de fragmentos, puntajes).
+   - Entre dos intentos del mismo agente vale el más reciente, porque el supervisor lo pidió como corrección. El Analista y el sintetizador, que son los que reciben varios intentos, tienen esa regla en su prompt.
+   - El validador detecta números sin respaldo y citas a fragmentos o archivos que nunca se recuperaron, y el supervisor pide la corrección.
 3. **Control.** Si el LLM del supervisor quiere algo que las reglas no permiten, ganan las reglas. La decisión queda registrada con el motivo en el campo `guard` y se ve en la traza como `⛔ regla dura`.
 4. **Conflicto sin resolver.** Si se agotan los intentos y la validación sigue fallando, la respuesta sale igual con una **nota de validación** que dice qué no se pudo verificar.
 5. **Fallas.** Si un especialista tira una excepción, el aporte queda con `status="error"` y el supervisor decide con eso. Si falla el LLM del supervisor, se aplica una política por defecto: investigar, sintetizar, cerrar.
@@ -145,12 +152,13 @@ El historial interno de cada agente ReAct queda encapsulado en el nodo: al estad
 
 ## Resultados de la corrida real
 
-Salida de [`demo.ipynb`](demo.ipynb), ejecutado el 24/09/2026. Supervisor y sintetizador en `gemini-3-flash-preview`, especialistas en `gemini-3.5-flash-lite`, `thinking_level=low`. Llamadas y tokens son los que reportó la API. Los tiempos incluyen las esperas del limitador de ritmo.
+Corridas del 24/09/2026: las dos primeras filas salen de [`demo.ipynb`](demo.ipynb) y la tercera de `python main.py`. Las dos primeras se ejecutaron antes de corregir el validador (ver la nota al final de esta sección). Supervisor y sintetizador en `gemini-3-flash-preview`, especialistas en `gemini-3.5-flash-lite`, `thinking_level=low`. Llamadas y tokens son los que reportó la API. Los tiempos incluyen las esperas del limitador de ritmo.
 
 | Consulta | Ruta del supervisor | Validación | Llamadas al LLM | Tokens (entrada / salida) | Tiempo |
 |---|---|---|---|---|---|
 | Recursos de `pagos-api` al máximo de réplicas, en blue-green y contra el límite por pod | researcher → analyst → synthesizer → FINISH | aprobada: 16 números con respaldo, 3 citas válidas | 10 | 11.728 / 1.691 | 288 s |
 | Precio de la licencia para 80 personas (no está en la documentación) | researcher → synthesizer → FINISH | aprobada | 9 | 11.857 / 1.400 | 225 s |
+| ¿Qué pasa si despliego a prod un viernes sin `--hotfix`? (`python main.py`, [traza completa](docs/corrida_refinamiento.txt)) | researcher → **researcher** → synthesizer → FINISH | aprobada: 4 números con respaldo, 1 cita válida | 10 | 9.646 / 1.825 | 286 s |
 
 En la primera consulta, el Investigador hizo 2 búsquedas y trajo el manifiesto (`cpu: "500m"`, `memory: "512Mi"`, `replicas.max: 10`), la regla de blue-green (duplica el consumo) y el límite por pod (4 CPU y 8 GiB), cada dato con su cita. El Analista hizo 4 cálculos y 1 conversión con herramientas. La respuesta final:
 
@@ -158,7 +166,19 @@ En la primera consulta, el Investigador hizo 2 búsquedas y trajo el manifiesto 
 
 En la segunda, el Investigador hizo 3 búsquedas, declaró el precio como *no encontrado* y el supervisor **se salteó al Analista**. No había nada que calcular, así que la respuesta dice que el dato no está en vez de inventarlo.
 
-El notebook agrega dos corridas determinísticas (sin API): un refinamiento del Investigador más un número inventado que el validador rechaza, y un supervisor que pide investigar para siempre y las reglas duras cortan en 4 decisiones.
+La tercera consulta muestra un **refinamiento real, sin guion**. El supervisor evaluó que la primera investigación traía la ventana horaria pero no qué pasa fuera de ella, y le devolvió la tarea al Investigador con una instrucción más específica. Con el segundo aporte pasó a la síntesis.
+
+[`demo_reglas.ipynb`](demo_reglas.ipynb) agrega tres corridas determinísticas (sin API):
+- un refinamiento del Investigador y un número inventado que el validador rechaza;
+- un supervisor que pide investigar para siempre y las reglas duras cortan en 4 decisiones;
+- un aporte que llega después de un borrador validado y obliga a actualizarlo antes de cerrar.
+
+**Nota sobre el validador.** Una auditoría posterior encontró que el validador tomaba como evidencia la metadata de las herramientas (el `#5` de un id de fragmento respaldaba un "5") y no controlaba las citas a archivo sin `#n`. Lo corregí y re-validé las respuestas grabadas con la versión nueva, reconstruyendo la evidencia a partir de los ids de fragmentos que figuran en cada traza:
+- la consulta 1 sigue aprobada, con 14 números con respaldo en lugar de 16, porque ya no cuenta los dígitos de los nombres de archivo;
+- la tercera da el mismo resultado;
+- la respuesta de la consulta 2 ahora se rechazaría, porque cita dos archivos (`02_...` y `03_...`) de los que no se recuperó ningún fragmento, y el supervisor pediría corregirla.
+
+`demo.ipynb` se vuelve a ejecutar con la próxima cuota diaria de la API.
 
 La primera versión de la demo usaba un solo modelo sin limitador y chocó a mitad del flujo con el límite de 5 pedidos por minuto. Aun así el grafo terminó: el supervisor cayó a su política por defecto y las reglas de intentos cerraron la ejecución. De esa corrida salieron el limitador de ritmo, el reparto de modelos por rol y un arreglo: si el sintetizador falla, el mensaje de error ya no queda como respuesta.
 
@@ -179,12 +199,17 @@ cp .env.example .env               # completá GOOGLE_API_KEY
 python knowledge_base.py           # indexa knowledge/ en ChromaDB (si no, se hace solo la primera vez)
 python main.py --demo              # consulta de demostración con la traza de delegación
 python main.py "¿Qué pasa si despliego a prod un viernes sin --hotfix?"
-python main.py --diagram           # regenera docs/graph.mmd y docs/graph.png
-pytest                             # 32 tests offline: no usan la API
-jupyter nbconvert --to notebook --execute demo.ipynb --inplace   # re-ejecuta la demo
+python main.py --diagram           # regenera docs/graph.mmd y docs/graph.png (no necesita clave)
+pytest                             # 41 tests offline: no usan la API
+jupyter nbconvert --to notebook --execute demo_reglas.ipynb --inplace   # escenarios sin API
+jupyter nbconvert --to notebook --execute demo.ipynb --inplace          # corridas reales (usa la API)
 ```
 
-Los tests usan dobles guionados (`tests/doubles.py`) en lugar del LLM y cubren el flujo completo, el refinamiento, las reglas duras, el límite de pasos, la validación, el aislamiento de contexto, las herramientas y la base vectorial.
+Los tests usan dobles guionados (`tests/doubles.py`) en lugar del LLM. Cubren:
+- el flujo completo, el refinamiento y cada regla dura (incluidos cerrar sin investigar y el borrador desactualizado);
+- el límite de pasos y la validación, con metadata que no cuenta como evidencia y citas a archivo;
+- el aislamiento de contexto y que un error no le llegue como dato al siguiente agente;
+- la ejecución async, la CLI sin clave, las herramientas y la base vectorial.
 
 ## Estructura
 
@@ -203,13 +228,15 @@ orquestador-multiagente/
 │   ├── validator.py          # validación determinística del borrador
 │   └── common.py             # correr un agente ReAct y registrar su aporte
 ├── knowledge/                # corpus Orbital (de la Pre-entrega 3)
-├── docs/graph.mmd, graph.png # diagrama del grafo
-├── demo.ipynb                # demo ejecutada del flujo de delegación
+├── docs/                     # diagrama del grafo (.mmd y .png) y traza de la corrida con refinamiento
+├── demo.ipynb                # demo del flujo de delegación ejecutada contra Gemini
+├── demo_reglas.ipynb         # refinamiento y reglas de parada con dobles guionados (sin API)
 └── tests/                    # tests offline + dobles guionados
 ```
 
 ## Limitaciones
 
+- **La búsqueda es solo semántica.** En la tercera consulta, ninguna de las 3 búsquedas trajo entre los 4 fragmentos más parecidos la sección de `04_troubleshooting.md` que nombra el error `PROD_WINDOW_CLOSED`. El sistema no lo inventó: lo declaró como no encontrado, pero la respuesta quedó menos completa de lo que permite la documentación. Una búsqueda híbrida (BM25 + vectores, como la de la Pre-entrega 4) encontraría ese tipo de término exacto.
 - **El validador es una heurística.** Verifica que cada número se pueda rastrear hasta una herramienta, pero no entiende qué significa: un número chico que aparece en cualquier fragmento recuperado (un 2, un 10) pasa aunque se haya usado mal. La revisión semántica la hace el supervisor con su rúbrica.
 - **Cuota de la capa gratuita de Gemini.** En esta cuenta, cada modelo admite 5 pedidos por minuto y 20 por día. El limitador de ritmo cubre el primer límite, pero hace más lenta cada consulta. Para el segundo, si un modelo se agota se lo puede cambiar por otro en `SUPERVISOR_MODEL` o `LLM_MODEL`. Con una clave paga conviene `LLM_RPM=0`.
 - **Ejecución secuencial.** Los especialistas no corren en paralelo. Para estas consultas no hace falta: el Analista necesita los datos del Investigador.

@@ -90,6 +90,7 @@ def make_research_node(agent: Runnable, cfg: Settings = default_settings) -> Cal
             run.content,
             sources=list(dict.fromkeys(retrieved)),  # únicos, en orden de aparición
             tool_calls=run.tool_calls,
+            evidence=run.evidence,
             status=run.status,
         )
         return {"contributions": [contribution], "messages": [AIMessage(content=run.content, name="researcher")]}
