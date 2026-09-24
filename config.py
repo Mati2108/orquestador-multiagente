@@ -7,6 +7,7 @@ https://aistudio.google.com/apikey).
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,8 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT_DIR / ".env")
+# El SDK de Gemini avisa por cada llamada que LangChain no usa su "AFC": es ruido, no un error.
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
 
 def _env_int(name: str, default: int) -> int:
