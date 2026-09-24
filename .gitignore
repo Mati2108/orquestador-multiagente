@@ -1,0 +1,19 @@
+# secretos
+.env
+
+# base vectorial local (se regenera sola desde knowledge/)
+vectorstore/
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# notebooks / editores / SO
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,13 @@
+langgraph>=1.2,<2
+langchain>=1.4,<2
+langchain-core>=1.6,<2
+langchain-google-genai>=4.4,<5
+langchain-chroma>=1.1,<2
+chromadb>=1.5,<2
+pydantic>=2.10,<3
+python-dotenv>=1.0
+
+# tests y notebook de demo
+pytest>=8
+ipykernel>=6
+nbconvert>=7
